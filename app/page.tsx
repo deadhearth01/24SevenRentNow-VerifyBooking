@@ -56,8 +56,8 @@ export default function VerifyBooking() {
 
   const requiredDocuments = useMemo(() => [
     'Valid Driver License (Physical copy required)',
-    'Proof of Insurance (Declaration Page)',
-    'Physical Credit Card (No debit/digital cards accepted)',
+    'Proof of Insurance (Declaration Page): Bring a copy of your insurance declaration page. Insurance can also be purchased at the counter.',
+    'Physical Credit Card (No debit/digital cards accepted): Name on the reservation must match the name on credit card.',
     'Full coverage insurance documentation',
   ], []);
 
