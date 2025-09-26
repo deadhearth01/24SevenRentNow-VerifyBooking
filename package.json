@@ -1,0 +1,33 @@
+{
+  "name": "24sevenrentnow-verify-booking",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.1",
+    "@emotion/styled": "^11.11.0",
+    "@google-cloud/storage": "^7.5.0",
+    "@mui/icons-material": "^5.14.15",
+    "@mui/material": "^5.14.15",
+    "@supabase/supabase-js": "^2.38.0",
+    "@types/node": "^20.8.7",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-google-recaptcha": "^3.1.0",
+    "typescript": "^5.2.2"
+  },
+  "devDependencies": {
+    "@types/react-google-recaptcha": "^2.1.8",
+    "babel-plugin-react-compiler": "^19.1.0-rc.3",
+    "eslint": "^8.51.0",
+    "eslint-config-next": "^15.5.4"
+  }
+}
