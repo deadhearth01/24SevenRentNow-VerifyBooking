@@ -1,12 +1,6 @@
 {
   "version": 2,
   "name": "24sevenrentnow-verify-booking",
-  "builds": [
-    {
-      "src": "next.config.js",
-      "use": "@vercel/next"
-    }
-  ],
   "regions": ["iad1"],
   "github": {
     "silent": true
