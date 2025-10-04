@@ -18,6 +18,12 @@ import {
   Alert,
   Paper,
   Snackbar,
+  TextField,
+  Select,
+  MenuItem,
+  InputLabel,
+  FormControl,
+  Grid,
 } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
@@ -28,6 +34,7 @@ import { supabase } from '../lib/supabase';
 import { User } from '@supabase/supabase-js';
 import Header from '../components/Header';
 import SessionManager from '../lib/sessionManager';
+import { sendBookingConfirmation, isValidPhoneNumber, COUNTRY_CODES } from '../lib/whatsapp';
 
 // Lazy load the GuidelinesContent to improve initial load performance
 const GuidelinesContent = React.lazy(() => import('../components/GuidelinesContent'));
@@ -54,6 +61,9 @@ export default function VerifyBooking() {
   const [guidelinesAccepted, setGuidelinesAccepted] = useState(false);
   const [showGuidelines, setShowGuidelines] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [countryCode, setCountryCode] = useState('91'); // Default to India
+  const [phoneError, setPhoneError] = useState('');
 
   const requiredDocuments = useMemo(() => [
     'Valid Driver License (Physical copy required)',
@@ -341,6 +351,7 @@ export default function VerifyBooking() {
       setCheckedDocuments(documents);
       setGuidelinesAccepted(existingBooking.guidelines_accepted || false);
       setBookingId(existingBooking.booking_id);
+      setPhoneNumber(existingBooking.phone_number || '');
       
       // Check if ride is already completed
       if (existingBooking.verification_status === 'ride_completed') {
@@ -460,6 +471,22 @@ export default function VerifyBooking() {
       return;
     }
 
+    if (!phoneNumber.trim()) {
+      setPhoneError('Please enter your phone number to receive booking confirmation');
+      setError('Phone number is required');
+      return;
+    }
+
+    // Get expected digits for the selected country
+    const selectedCountry = COUNTRY_CODES.find(c => c.code === countryCode);
+    const expectedDigits = selectedCountry?.digits || 10;
+
+    if (!isValidPhoneNumber(phoneNumber, countryCode)) {
+      setPhoneError(`Please enter a valid ${expectedDigits}-digit phone number for ${selectedCountry?.name || 'selected country'}`);
+      setError('Invalid phone number format');
+      return;
+    }
+
     if (!bookingId) {
       setError('Booking ID is still being generated. Please wait a moment and try again.');
       return;
@@ -467,6 +494,7 @@ export default function VerifyBooking() {
 
     setBookingLoading(true);
     setError(null);
+    setPhoneError('');
 
     try {
       if (!user) throw new Error('User not authenticated');
@@ -490,11 +518,12 @@ export default function VerifyBooking() {
         booking_id: bookingId,
         user_id: user.id,
         user_email: user.email,
+        phone_number: phoneNumber,
         verification_status: 'confirmed',
         documents_count: checkedDocuments.length
       });
 
-      // Insert booking verification
+      // Insert booking verification with phone number
       const { error: bookingError } = await supabase
         .from('booking_verifications')
         .insert({
@@ -502,6 +531,7 @@ export default function VerifyBooking() {
           user_id: user.id,
           user_email: user.email,
           user_name: user.user_metadata?.full_name || user.email,
+          phone_number: phoneNumber,
           documents_confirmed: JSON.stringify(checkedDocuments),
           guidelines_accepted: guidelinesAccepted,
           verification_status: 'confirmed',
@@ -514,19 +544,40 @@ export default function VerifyBooking() {
 
       console.log('✅ Booking verification inserted successfully');
 
+      // Send WhatsApp confirmation (non-blocking)
+      sendBookingConfirmation({
+        bookingId: bookingId,
+        phoneNumber: phoneNumber,
+        countryCode: countryCode
+      }).then((result) => {
+        if (result.success) {
+          console.log('📱 WhatsApp confirmation sent successfully');
+          setSnackbar({
+            open: true,
+            message: 'Booking confirmed! WhatsApp confirmation sent to your phone.',
+            severity: 'success'
+          });
+        } else {
+          console.warn('⚠️ WhatsApp message failed:', result.error);
+          // Don't fail the booking if WhatsApp fails
+          setSnackbar({
+            open: true,
+            message: 'Booking confirmed! (WhatsApp notification could not be sent)',
+            severity: 'warning'
+          });
+        }
+      }).catch((err) => {
+        console.warn('⚠️ WhatsApp error:', err);
+      });
+
       // Track action (non-blocking)
       trackUserAction('booking_confirmed', {
         userEmail: user.email,
         bookingVerificationId: bookingId,
+        phoneNumber: phoneNumber,
         documentsVerified: checkedDocuments,
         guidelinesAccepted: true,
       }).catch(console.warn);
-      
-      setSnackbar({
-        open: true,
-        message: 'Booking confirmed successfully!',
-        severity: 'success'
-      });
       
       setCurrentPage('confirmation');
       
@@ -542,7 +593,7 @@ export default function VerifyBooking() {
     } finally {
       setBookingLoading(false);
     }
-  }, [user, bookingId, checkedDocuments, guidelinesAccepted, requiredDocuments, trackUserAction]);
+  }, [user, bookingId, checkedDocuments, guidelinesAccepted, phoneNumber, countryCode, requiredDocuments, trackUserAction]);
 
   // Handle photo upload for ride completion
   const handlePhotoUpload = useCallback((photoType: keyof typeof ridePhotos) => {
@@ -1359,6 +1410,73 @@ export default function VerifyBooking() {
               />
             </Box>
 
+            {/* Phone Number Field */}
+            <Box sx={{ mb: 3 }}>
+              <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+                Phone Number *
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={4} sm={3}>
+                  <FormControl fullWidth size="small">
+                    <Select
+                      value={countryCode}
+                      onChange={(e) => {
+                        setCountryCode(e.target.value);
+                        setPhoneError('');
+                      }}
+                      sx={{
+                        '& .MuiSelect-select': {
+                          fontSize: { xs: '0.875rem', sm: '1rem' }
+                        }
+                      }}
+                    >
+                      {COUNTRY_CODES.map((country) => (
+                        <MenuItem key={country.code} value={country.code}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <span>{country.flag}</span>
+                            <span>+{country.code}</span>
+                          </Box>
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={8} sm={9}>
+                  <TextField
+                    fullWidth
+                    placeholder={`Enter ${COUNTRY_CODES.find(c => c.code === countryCode)?.digits || 10}-digit number`}
+                    value={phoneNumber}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/[^\d]/g, ''); // Only allow digits
+                      const maxLength = COUNTRY_CODES.find(c => c.code === countryCode)?.digits || 15;
+                      setPhoneNumber(value.slice(0, maxLength));
+                      setPhoneError('');
+                    }}
+                    error={!!phoneError}
+                    required
+                    inputProps={{
+                      pattern: '[0-9]*',
+                      inputMode: 'numeric'
+                    }}
+                    sx={{
+                      '& .MuiInputBase-root': {
+                        fontSize: { xs: '0.875rem', sm: '1rem' }
+                      }
+                    }}
+                  />
+                </Grid>
+              </Grid>
+              {phoneError ? (
+                <Typography variant="caption" color="error" sx={{ mt: 0.5, display: 'block' }}>
+                  {phoneError}
+                </Typography>
+              ) : (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  You will receive booking confirmation via WhatsApp
+                </Typography>
+              )}
+            </Box>
+
             <Button
               variant="contained"
               fullWidth
@@ -1366,6 +1484,7 @@ export default function VerifyBooking() {
               disabled={
                 checkedDocuments.length !== requiredDocuments.length || 
                 !guidelinesAccepted || 
+                !phoneNumber.trim() ||
                 bookingLoading
               }
               onClick={handleConfirmBooking}
