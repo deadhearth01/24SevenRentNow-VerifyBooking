@@ -16,29 +16,52 @@ import Image from 'next/image';
 import { AccountCircle as AccountIcon } from '@mui/icons-material';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import SessionManager from '../lib/sessionManager';
 
 function Header() {
   const [user, setUser] = useState<User | null>(null);
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   useEffect(() => {
+    let mounted = true;
+    
     // Get initial user session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-    });
+    const getInitialSession = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error('Header: Session error:', error);
+        }
+        if (mounted) {
+          setUser(session?.user ?? null);
+          console.log('Header: Initial session loaded:', session?.user ? 'User found' : 'No user');
+        }
+      } catch (error) {
+        console.error('Header: Failed to get session:', error);
+      }
+    };
+    
+    getInitialSession();
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
-        setUser(session?.user ?? null);
-        if (event === 'SIGNED_IN') {
-          setIsSigningIn(false);
+        console.log('Header: Auth state changed:', event);
+        if (mounted) {
+          setUser(session?.user ?? null);
+          if (event === 'SIGNED_IN') {
+            setIsSigningIn(false);
+          }
         }
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const handleMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
@@ -83,19 +106,36 @@ function Header() {
   const handleSignOut = useCallback(async () => {
     try {
       console.log('Header: Starting sign out process...');
-      const { error } = await supabase.auth.signOut();
+      
+      // Set loading state
+      setIsSigningOut(true);
+      
+      // Close menu first
+      handleClose();
+      
+      // Clear all cached session data first
+      SessionManager.clearAllAuthData();
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      
       if (error) {
         console.error('Header: Sign out error:', error);
-        alert(`Sign out failed: ${error.message}`);
-      } else {
-        console.log('Header: Sign out successful');
-        // Force page reload to reset all state
-        window.location.reload();
       }
-      handleClose();
+      
+      // Always reload to ensure clean state
+      console.log('Header: Reloading page to clear state...');
+      setTimeout(() => {
+        window.location.href = window.location.origin;
+      }, 100);
+      
     } catch (error) {
       console.error('Header: Sign out failed:', error);
-      alert('Sign out failed. Please try again.');
+      // Clear auth data and reload even if signout API fails
+      SessionManager.clearAllAuthData();
+      setTimeout(() => {
+        window.location.href = window.location.origin;
+      }, 100);
     }
   }, [handleClose]);
 
@@ -216,13 +256,14 @@ function Header() {
               </MenuItem>
               <MenuItem 
                 onClick={handleSignOut}
+                disabled={isSigningOut}
                 sx={{ 
                   color: 'error.main',
                   '&:hover': { bgcolor: 'error.light', color: 'error.contrastText' }
                 }}
               >
                 <Typography variant="body2" fontWeight="medium">
-                  🚪 Sign Out
+                  {isSigningOut ? '🔄 Signing Out...' : '🚪 Sign Out'}
                 </Typography>
               </MenuItem>
             </Menu>

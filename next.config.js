@@ -3,6 +3,7 @@ const nextConfig = {
   // Enable React 19 features and modern Next.js optimizations
   experimental: {
     reactCompiler: true,
+    optimizePackageImports: ['@mui/material', '@mui/icons-material'],
   },
   
   // Turbopack configuration (replaces deprecated experimental.turbo)
@@ -16,7 +17,9 @@ const nextConfig = {
   
   // Performance optimizations
   compiler: {
-    removeConsole: process.env.NODE_ENV === 'production',
+    removeConsole: process.env.NODE_ENV === 'production' ? {
+      exclude: ['error', 'warn'],
+    } : false,
   },
   
   // Image optimization
@@ -33,9 +36,11 @@ const nextConfig = {
     ],
     formats: ['image/webp', 'image/avif'],
     minimumCacheTTL: 60,
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
   },
   
-  // Headers for better caching
+  // Headers for better caching and performance
   async headers() {
     return [
       {
@@ -52,6 +57,23 @@ const nextConfig = {
           {
             key: 'Referrer-Policy',
             value: 'strict-origin-when-cross-origin',
+          },
+          {
+            key: 'X-DNS-Prefetch-Control',
+            value: 'on'
+          },
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=31536000; includeSubDomains'
+          },
+        ],
+      },
+      {
+        source: '/static/(.*)',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
           },
         ],
       },
@@ -71,26 +93,41 @@ const nextConfig = {
       config.optimization.splitChunks = {
         chunks: 'all',
         cacheGroups: {
+          default: false,
+          vendors: false,
           vendor: {
             test: /[\\/]node_modules[\\/]/,
             name: 'vendors',
             chunks: 'all',
+            priority: 20,
           },
           mui: {
             test: /[\\/]node_modules[\\/]@mui[\\/]/,
             name: 'mui',
             chunks: 'all',
+            priority: 30,
           },
           supabase: {
             test: /[\\/]node_modules[\\/]@supabase[\\/]/,
             name: 'supabase',
             chunks: 'all',
+            priority: 30,
+          },
+          commons: {
+            name: 'commons',
+            minChunks: 2,
+            priority: 10,
           },
         },
       };
     }
     return config;
   },
+  
+  // Optimize production builds
+  productionBrowserSourceMaps: false,
+  poweredByHeader: false,
+  compress: true,
 }
 
 module.exports = nextConfig

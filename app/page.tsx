@@ -27,6 +27,7 @@ import Image from 'next/image';
 import { supabase } from '../lib/supabase';
 import { User } from '@supabase/supabase-js';
 import Header from '../components/Header';
+import SessionManager from '../lib/sessionManager';
 
 // Lazy load the GuidelinesContent to improve initial load performance
 const GuidelinesContent = React.lazy(() => import('../components/GuidelinesContent'));
@@ -133,50 +134,100 @@ export default function VerifyBooking() {
 
   useEffect(() => {
     let mounted = true;
-    let timeoutId: NodeJS.Timeout;
+    let loadingTimeoutId: NodeJS.Timeout | undefined;
     
     const initializeAuth = async () => {
       try {
+        console.log('🔐 Initializing authentication...');
+        
+        // Get session without aggressive timeout
         const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) throw error;
+        
+        if (error) {
+          console.error('❌ Session error:', error);
+        }
         
         if (mounted) {
+          console.log('✅ Session loaded:', session ? `User: ${session.user.email}` : 'No user');
           setUser(session?.user ?? null);
           
           if (session?.user) {
-            await storeUserData(session.user);
-            await checkExistingBookingStatus(session.user);
+            console.log('👤 User authenticated, checking booking status...');
+            // Run these in parallel for faster loading
+            try {
+              const results = await Promise.all([
+                storeUserData(session.user),
+                checkExistingBookingStatus(session.user)
+              ]);
+              const hasExistingBooking = results[1];
+              console.log('✅ User data and booking status checked. Has booking:', hasExistingBooking);
+              
+              // Only set to verification page if no booking was found
+              if (!hasExistingBooking) {
+                console.log('ℹ️ No existing booking, showing verification page');
+                setCurrentPage('verification');
+              } else {
+                console.log('✅ Existing booking found, staying on confirmation page');
+              }
+            } catch (checkError) {
+              console.error('❌ Error during user/booking check:', checkError);
+              setCurrentPage('verification');
+            }
+          } else {
+            console.log('ℹ️ No user session, showing verification page');
+            setCurrentPage('verification');
           }
+          
+          // Always stop loading after auth check
           setLoading(false);
+          
+          // Clear the safety timeout since we completed
+          if (loadingTimeoutId) {
+            clearTimeout(loadingTimeoutId);
+          }
         }
       } catch (error) {
-        console.error('Error initializing auth:', error);
+        console.error('❌ Error initializing auth:', error);
         if (mounted) {
           setLoading(false);
+          setCurrentPage('verification');
         }
       }
     };
 
-    timeoutId = setTimeout(() => {
+    // Safety timeout - ONLY stops loading spinner, doesn't change page state
+    loadingTimeoutId = setTimeout(() => {
       if (mounted && loading) {
+        console.warn('⏰ Auth loading timeout - stopping loading spinner');
         setLoading(false);
+        // Don't touch currentPage here - let the auth flow complete
       }
-    }, 10000);
+    }, 8000);
 
     initializeAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('Main page: Auth state change:', event, session ? 'User logged in' : 'User logged out');
+        console.log('🔄 Auth state change:', event);
         if (mounted) {
           setUser(session?.user ?? null);
           
-          if (session?.user) {
-            await storeUserData(session.user);
-            await checkExistingBookingStatus(session.user);
-          } else {
+          if (session?.user && event === 'SIGNED_IN') {
+            console.log('👤 User signed in, checking booking status...');
+            const results = await Promise.all([
+              storeUserData(session.user),
+              checkExistingBookingStatus(session.user)
+            ]);
+            const hasExistingBooking = results[1];
+            
+            // Only set to verification if no existing booking
+            if (!hasExistingBooking) {
+              console.log('ℹ️ No existing booking on sign in, showing verification page');
+              setCurrentPage('verification');
+            }
+          } else if (!session?.user) {
             // User signed out - reset all application state
-            console.log('Main page: Resetting application state after sign out');
+            console.log('🚪 User signed out, resetting application state');
             setCurrentPage('verification');
             setCheckedDocuments([]);
             setGuidelinesAccepted(false);
@@ -200,7 +251,7 @@ export default function VerifyBooking() {
 
     return () => {
       mounted = false;
-      if (timeoutId) clearTimeout(timeoutId);
+      if (loadingTimeoutId) clearTimeout(loadingTimeoutId);
       subscription.unsubscribe();
     };
   }, []);
@@ -209,111 +260,135 @@ export default function VerifyBooking() {
     try {
       if (!user.email) return;
 
-      const { data: existingUser } = await supabase
+      // Use upsert for faster operation (single query instead of select + update/insert)
+      await supabase
         .from('users')
-        .select('id')
-        .eq('email', user.email)
-        .single();
-
-      if (existingUser) {
-        await supabase
-          .from('users')
-          .update({
-            name: user.user_metadata?.full_name || user.user_metadata?.name || user.email,
-            avatar_url: user.user_metadata?.avatar_url || null,
-            updated_at: new Date().toISOString()
-          })
-          .eq('email', user.email);
-      } else {
-        await supabase
-          .from('users')
-          .insert({
-            id: user.id,
-            email: user.email,
-            name: user.user_metadata?.full_name || user.user_metadata?.name || user.email,
-            avatar_url: user.user_metadata?.avatar_url || null,
-          });
-      }
+        .upsert({
+          id: user.id,
+          email: user.email,
+          name: user.user_metadata?.full_name || user.user_metadata?.name || user.email,
+          avatar_url: user.user_metadata?.avatar_url || null,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'email',
+          ignoreDuplicates: false
+        });
     } catch (error) {
       console.error('Error storing user data:', error);
     }
   }, []);
 
-  const checkExistingBookingStatus = useCallback(async (user: User) => {
+  const checkExistingBookingStatus = useCallback(async (user: User): Promise<boolean> => {
     try {
-      if (!user.email) return;
+      if (!user.email) {
+        console.log('No user email, skipping booking check');
+        return false;
+      }
 
-      console.log('Checking existing booking status for user:', user.email);
+      console.log('🔍 Checking existing booking status for user:', user.email);
 
-      // Check for any existing booking (confirmed or ride_completed)
-      const { data: existingBooking, error } = await supabase
+      // Query WITHOUT the join since tables aren't related in database
+      const queryPromise = supabase
         .from('booking_verifications')
         .select('*')
         .eq('user_email', user.email)
         .in('verification_status', ['confirmed', 'ride_completed'])
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code === 'PGRST116') {
-        console.log('No existing booking found for user');
-        return;
-      }
+      const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) => 
+        setTimeout(() => {
+          console.warn('⏰ Database query timeout after 5 seconds');
+          resolve({ data: null, error: { code: 'TIMEOUT', message: 'Query timeout' } });
+        }, 5000)
+      );
+
+      const { data: existingBooking, error } = await Promise.race([
+        queryPromise,
+        timeoutPromise
+      ]) as any;
+
+      console.log('📦 Database query result:', { 
+        foundBooking: !!existingBooking, 
+        errorCode: error?.code || null,
+        errorMessage: error?.message || null,
+        bookingStatus: existingBooking?.verification_status || null,
+        bookingId: existingBooking?.booking_id || null
+      });
 
       if (error) {
-        console.warn('Error checking booking status:', error);
-        return;
+        console.warn('❌ Error checking booking status:', error);
+        return false;
       }
 
-      if (existingBooking) {
-        console.log('Found existing booking:', existingBooking.booking_id, 'Status:', existingBooking.verification_status);
+      if (!existingBooking) {
+        console.log('ℹ️ No existing confirmed booking found - user needs to complete verification');
+        return false;
+      }
+
+      console.log('✅ Found existing booking:', {
+        bookingId: existingBooking.booking_id,
+        status: existingBooking.verification_status,
+        documentsConfirmed: existingBooking.documents_confirmed,
+        guidelinesAccepted: existingBooking.guidelines_accepted,
+        createdAt: existingBooking.created_at
+      });
+      
+      // Restore basic booking data
+      const documents = existingBooking.documents_confirmed ? JSON.parse(existingBooking.documents_confirmed) : [];
+      console.log('📋 Restoring documents:', documents);
+      setCheckedDocuments(documents);
+      setGuidelinesAccepted(existingBooking.guidelines_accepted || false);
+      setBookingId(existingBooking.booking_id);
+      
+      // Check if ride is already completed
+      if (existingBooking.verification_status === 'ride_completed') {
+        console.log('🚗 Ride already completed - checking for ride completion data...');
+        setIsRideCompleted(true);
         
-        // Restore basic booking data
-        setCheckedDocuments(existingBooking.documents_confirmed ? JSON.parse(existingBooking.documents_confirmed) : []);
-        setGuidelinesAccepted(existingBooking.guidelines_accepted || false);
-        setBookingId(existingBooking.booking_id);
-        
-        // Check if ride is already completed
-        if (existingBooking.verification_status === 'ride_completed') {
-          console.log('Ride already completed, checking ride completion data...');
-          
-          // Get ride completion details
-          const { data: rideCompletion, error: rideError } = await supabase
+        // Try to fetch ride completion data separately (no foreign key relation)
+        try {
+          const { data: rideCompletion } = await supabase
             .from('ride_completions')
             .select('*')
             .eq('booking_verification_id', existingBooking.booking_id)
-            .single();
-
-          if (rideError) {
-            console.warn('Error fetching ride completion data:', rideError);
-          } else if (rideCompletion) {
-            console.log('Found ride completion data:', rideCompletion);
-            setIsRideCompleted(true);
+            .maybeSingle();
+          
+          if (rideCompletion) {
+            console.log('📸 Found ride completion data:', rideCompletion);
             
             // Optionally restore the uploaded file metadata for display
             if (rideCompletion.file_metadata) {
               try {
                 const metadata = JSON.parse(rideCompletion.file_metadata);
-                console.log('Restored file metadata:', metadata);
-                // Note: We can't restore the actual File objects, but we have the metadata
+                console.log('📁 Restored file metadata:', metadata);
               } catch (e) {
                 console.warn('Error parsing file metadata:', e);
               }
             }
           }
+        } catch (rideError) {
+          console.warn('Could not fetch ride completion data:', rideError);
         }
-        
-        setCurrentPage('confirmation');
-        
-        trackUserAction('booking_status_restored', {
-          userEmail: user.email,
-          bookingVerificationId: existingBooking.booking_id,
-          previouslyConfirmed: true,
-          rideCompleted: existingBooking.verification_status === 'ride_completed',
-        }).catch(console.warn);
       }
+      
+      console.log('🔄 Switching to confirmation page');
+      setCurrentPage('confirmation');
+      
+      // Track restoration (non-blocking)
+      trackUserAction('booking_status_restored', {
+        userEmail: user.email,
+        bookingVerificationId: existingBooking.booking_id,
+        previouslyConfirmed: true,
+        rideCompleted: existingBooking.verification_status === 'ride_completed',
+      }).catch(err => console.warn('Failed to track action:', err));
+      
+      return true; // Return true to indicate booking was found
+      
     } catch (error) {
-      console.warn('Could not check existing booking status:', error);
+      console.log('❌ Could not check existing booking status:', error);
+      return false;
     }
   }, [trackUserAction]);
 
@@ -396,35 +471,35 @@ export default function VerifyBooking() {
     try {
       if (!user) throw new Error('User not authenticated');
 
-      let { data: userData, error: userError } = await supabase
+      // Optimized: Use upsert to handle both insert and update in one query
+      const { error: userUpsertError } = await supabase
         .from('users')
-        .select('id')
-        .eq('email', user.email)
-        .single();
+        .upsert({
+          id: user.id,
+          email: user.email,
+          name: user.user_metadata?.full_name || user.email,
+          avatar_url: user.user_metadata?.avatar_url || null,
+        }, {
+          onConflict: 'email',
+          ignoreDuplicates: false
+        });
 
-      if (userError && userError.code === 'PGRST116') {
-        const { data: newUser, error: createError } = await supabase
-          .from('users')
-          .insert({
-            email: user.email,
-            name: user.user_metadata?.full_name || user.email,
-          })
-          .select('id')
-          .single();
+      if (userUpsertError) throw userUpsertError;
 
-        if (createError) throw createError;
-        userData = newUser;
-      } else if (userError) {
-        throw userError;
-      }
+      console.log('💾 Inserting booking verification:', {
+        booking_id: bookingId,
+        user_id: user.id,
+        user_email: user.email,
+        verification_status: 'confirmed',
+        documents_count: checkedDocuments.length
+      });
 
-      if (!userData) throw new Error('Failed to get or create user data');
-
-      await supabase
+      // Insert booking verification
+      const { error: bookingError } = await supabase
         .from('booking_verifications')
         .insert({
           booking_id: bookingId,
-          user_id: userData.id,
+          user_id: user.id,
           user_email: user.email,
           user_name: user.user_metadata?.full_name || user.email,
           documents_confirmed: JSON.stringify(checkedDocuments),
@@ -432,6 +507,14 @@ export default function VerifyBooking() {
           verification_status: 'confirmed',
         });
 
+      if (bookingError) {
+        console.error('❌ Booking insert error:', bookingError);
+        throw bookingError;
+      }
+
+      console.log('✅ Booking verification inserted successfully');
+
+      // Track action (non-blocking)
       trackUserAction('booking_confirmed', {
         userEmail: user.email,
         bookingVerificationId: bookingId,
@@ -1309,8 +1392,8 @@ export default function VerifyBooking() {
           maxWidth="md"
           fullWidth
         >
-          <DialogTitle>
-            <Typography variant="h5">24SevenRentNow Guidelines</Typography>
+          <DialogTitle sx={{ fontSize: '1.5rem', fontWeight: 600 }}>
+            24SevenRentNow Guidelines
           </DialogTitle>
           <DialogContent>
             <Suspense fallback={<CircularProgress sx={{ display: 'block', mx: 'auto' }} />}>
