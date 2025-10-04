@@ -23,6 +23,7 @@ function Header() {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Add loading state
 
   useEffect(() => {
     let mounted = true;
@@ -36,10 +37,14 @@ function Header() {
         }
         if (mounted) {
           setUser(session?.user ?? null);
+          setIsLoading(false); // Done loading
           console.log('Header: Initial session loaded:', session?.user ? 'User found' : 'No user');
         }
       } catch (error) {
         console.error('Header: Failed to get session:', error);
+        if (mounted) {
+          setIsLoading(false); // Done loading even on error
+        }
       }
     };
     
@@ -274,9 +279,9 @@ function Header() {
             variant="contained"
             size="small"
             onClick={handleSignIn}
-            disabled={isSigningIn}
+            disabled={isSigningIn || isLoading}
           >
-            {isSigningIn ? 'Signing In...' : 'Sign In'}
+            {isLoading ? 'Loading...' : isSigningIn ? 'Signing In...' : 'Sign In'}
           </Button>
         )}
       </Toolbar>
