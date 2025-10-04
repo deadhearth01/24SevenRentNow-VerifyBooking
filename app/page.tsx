@@ -154,47 +154,65 @@ export default function VerifyBooking() {
         
         if (error) {
           console.error('❌ Session error:', error);
-        }
-        
-        if (mounted) {
-          console.log('✅ Session loaded:', session ? `User: ${session.user.email}` : 'No user');
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            console.log('👤 User authenticated, checking booking status...');
-            try {
-              // Run user data store and booking check in parallel
-              const [, hasExistingBooking] = await Promise.all([
-                storeUserData(session.user),
-                checkExistingBookingStatus(session.user)
-              ]);
-              
-              console.log('✅ Booking check complete. Has booking:', hasExistingBooking);
-              
-              // Set page state based on booking status
-              if (hasExistingBooking) {
-                console.log('✅ Existing booking found, showing confirmation page');
-                setCurrentPage('confirmation');
-              } else {
-                console.log('ℹ️ No existing booking, showing verification page');
-                setCurrentPage('verification');
-              }
-            } catch (checkError) {
-              console.error('❌ Error during booking check:', checkError);
-              setCurrentPage('verification');
-            }
-          } else {
-            console.log('ℹ️ No user session, showing verification page');
+          if (mounted) {
+            setLoading(false);
             setCurrentPage('verification');
           }
-          
-          // Stop loading
-          setLoading(false);
-          
-          // Clear timeout
-          if (loadingTimeoutId) {
-            clearTimeout(loadingTimeoutId);
+          return;
+        }
+        
+        if (!mounted) return;
+        
+        console.log('✅ Session loaded:', session ? `User: ${session.user.email}` : 'No user');
+        setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          console.log('👤 User authenticated, checking booking status...');
+          try {
+            // Run user data store and booking check in parallel with timeout
+            const bookingCheckPromise = Promise.all([
+              storeUserData(session.user),
+              checkExistingBookingStatus(session.user)
+            ]);
+            
+            // Add 2 second timeout for booking check
+            const timeoutPromise = new Promise<[void, boolean]>((resolve) => {
+              setTimeout(() => {
+                console.warn('⏰ Booking check timeout, continuing anyway');
+                resolve([undefined, false]);
+              }, 2000);
+            });
+            
+            const [, hasExistingBooking] = await Promise.race([
+              bookingCheckPromise,
+              timeoutPromise
+            ]);
+            
+            console.log('✅ Booking check complete. Has booking:', hasExistingBooking);
+            
+            // Set page state based on booking status
+            if (hasExistingBooking) {
+              console.log('✅ Existing booking found, showing confirmation page');
+              setCurrentPage('confirmation');
+            } else {
+              console.log('ℹ️ No existing booking, showing verification page');
+              setCurrentPage('verification');
+            }
+          } catch (checkError) {
+            console.error('❌ Error during booking check:', checkError);
+            setCurrentPage('verification');
           }
+        } else {
+          console.log('ℹ️ No user session, showing verification page');
+          setCurrentPage('verification');
+        }
+        
+        // Always stop loading after processing
+        setLoading(false);
+        
+        // Clear timeout
+        if (loadingTimeoutId) {
+          clearTimeout(loadingTimeoutId);
         }
       } catch (error) {
         console.error('❌ Error initializing auth:', error);
@@ -205,56 +223,78 @@ export default function VerifyBooking() {
       }
     };
 
-    // Reduced timeout to 5 seconds for faster fallback
+    // Reduced timeout to 3 seconds for faster fallback
     loadingTimeoutId = setTimeout(() => {
       if (mounted && loading) {
         console.warn('⏰ Auth loading timeout - stopping loading spinner');
         setLoading(false);
         setCurrentPage('verification');
       }
-    }, 5000); // Reduced from 8000ms
+    }, 3000); // Reduced from 5000ms
 
     initializeAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔄 Auth state change:', event);
-        if (mounted) {
-          setUser(session?.user ?? null);
+        if (!mounted) return;
+        
+        setUser(session?.user ?? null);
+        
+        if (session?.user && event === 'SIGNED_IN') {
+          console.log('👤 User signed in, checking booking status...');
           
-          if (session?.user && event === 'SIGNED_IN') {
-            console.log('👤 User signed in, checking booking status...');
-            const results = await Promise.all([
+          // Ensure loading is false when user signs in
+          setLoading(false);
+          
+          try {
+            // Add timeout to booking check
+            const checkPromise = Promise.all([
               storeUserData(session.user),
               checkExistingBookingStatus(session.user)
             ]);
+            
+            const timeoutPromise = new Promise<[void, boolean]>((resolve) => {
+              setTimeout(() => {
+                console.warn('⏰ Booking check timeout during sign in');
+                resolve([undefined, false]);
+              }, 2000);
+            });
+            
+            const results = await Promise.race([checkPromise, timeoutPromise]);
             const hasExistingBooking = results[1];
             
             // Only set to verification if no existing booking
             if (!hasExistingBooking) {
               console.log('ℹ️ No existing booking on sign in, showing verification page');
               setCurrentPage('verification');
+            } else {
+              console.log('✅ Existing booking found, showing confirmation page');
+              setCurrentPage('confirmation');
             }
-          } else if (!session?.user) {
-            // User signed out - reset all application state
-            console.log('🚪 User signed out, resetting application state');
+          } catch (error) {
+            console.error('❌ Error during sign in booking check:', error);
             setCurrentPage('verification');
-            setCheckedDocuments([]);
-            setGuidelinesAccepted(false);
-            setRidePhotos({
-              exteriorFront: null,
-              exteriorBack: null,
-              exteriorLeft: null,
-              exteriorRight: null,
-              interiorFront: null,
-              interiorBack: null,
-              dashboard: null,
-            });
-            setSurroundingVideo(null);
-            setIsRideCompleted(false);
-            setError(null);
           }
+        } else if (!session?.user) {
+          // User signed out - reset all application state
+          console.log('🚪 User signed out, resetting application state');
           setLoading(false);
+          setCurrentPage('verification');
+          setCheckedDocuments([]);
+          setGuidelinesAccepted(false);
+          setRidePhotos({
+            exteriorFront: null,
+            exteriorBack: null,
+            exteriorLeft: null,
+            exteriorRight: null,
+            interiorFront: null,
+            interiorBack: null,
+            dashboard: null,
+          });
+          setSurroundingVideo(null);
+          setIsRideCompleted(false);
+          setError(null);
         }
       }
     );

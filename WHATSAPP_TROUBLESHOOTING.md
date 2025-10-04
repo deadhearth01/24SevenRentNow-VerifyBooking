@@ -14,7 +14,7 @@
 2. **WATI Configuration**
    - ✅ Template name: `bookingconfirmation` must exist in WATI dashboard
    - ✅ Template must be **approved** by WhatsApp
-   - ✅ Channel number: `16056050919` must be active
+   - ✅ Channel number: `YOUR_CHANNEL_NUMBER` must be active
    - ✅ API token must be valid (not expired)
 
 3. **WhatsApp Account**
@@ -46,10 +46,10 @@
 
 **Step 3: Test WATI API Directly**
 ```bash
-# Replace with actual values:
+# Replace with your actual values:
 curl -X 'POST' \
-  'https://live-mt-server.wati.io/1027960/api/v1/sendTemplateMessage?whatsappNumber=919876543210' \
-  -H 'Authorization: Bearer YOUR_TOKEN' \
+  'https://live-mt-server.wati.io/YOUR_TENANT_ID/api/v1/sendTemplateMessage?whatsappNumber=1234567890' \
+  -H 'Authorization: Bearer YOUR_AUTH_TOKEN' \
   -H 'Content-Type: application/json-patch+json' \
   -d '{
     "template_name": "bookingconfirmation",
@@ -60,7 +60,7 @@ curl -X 'POST' \
         "value": "BK-TEST-123"
       }
     ],
-    "channel_number": "16056050919"
+    "channel_number": "YOUR_CHANNEL_NUMBER"
   }'
 ```
 

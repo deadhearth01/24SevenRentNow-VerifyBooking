@@ -63,7 +63,6 @@ setBookingLoading(false);
 
 // Then send WhatsApp in background
 Promise.all([
-  sendBookingConfirmation({ templateName: 'bookingconfirmation', ... }),
   sendBookingConfirmation({ templateName: 'after_booking', ... }),
   sendBookingConfirmation({ templateName: 'guidelines_24_car', ... })
 ]).then(results => {
@@ -139,7 +138,7 @@ TypeError: Cannot read properties of undefined (reading 'call')
 - [ ] Clear .next cache and rebuild
 - [ ] Test locally that page loads
 - [ ] Test booking flow end-to-end
-- [ ] Verify all 3 WhatsApp templates send
+- [ ] Verify both 2 WhatsApp templates send
 - [ ] Check console for any errors
 
 ### After Deploying to Vercel:
@@ -152,7 +151,7 @@ TypeError: Cannot read properties of undefined (reading 'call')
 - [ ] Test that page loads quickly (< 3 seconds)
 - [ ] Test that booking confirmation is immediate
 - [ ] Check Function Logs for WhatsApp delivery
-- [ ] Verify all 3 templates arrive on phone
+- [ ] Verify both 2 templates arrive on phone
 
 ## 🎯 Expected Performance
 
@@ -185,7 +184,6 @@ npm run build
 ### 2. Verify WATI Templates Exist
 
 Log into WATI dashboard and verify these templates are APPROVED:
-- `bookingconfirmation` ✓
 - `after_booking` ✓
 - `guidelines_24_car` ✓
 
@@ -201,9 +199,9 @@ git push origin main
 
 Make sure these are set for **ALL environments**:
 ```
-WATI_API_URL=https://live-mt-server.wati.io/1027960/api/v1/sendTemplateMessage
+WATI_API_URL=https://live-mt-server.wati.io/YOUR_TENANT_ID/api/v1/sendTemplateMessage
 WATI_AUTH_TOKEN=your_token_here
-WATI_CHANNEL_NUMBER=16056050919
+WATI_CHANNEL_NUMBER=YOUR_CHANNEL_NUMBER
 WATI_TEMPLATE_NAME=bookingconfirmation
 ```
 
@@ -274,15 +272,17 @@ WATI_TEMPLATE_NAME=bookingconfirmation
 - 0 files added
 - Performance improved by ~80%
 - User wait time reduced from 13-18s to 2-3s
-- Added 2 new WhatsApp templates
-- All templates send in parallel
+- Added 2 WhatsApp templates (after_booking, guidelines_24_car)
+- Both templates send in parallel
+- Default country code set to US (+1)
 
 **Key Benefits:**
 - ⚡ **Faster page loads** (2-3s instead of 8-10s)
 - ⚡ **Instant booking confirmation** (immediate instead of 5-8s wait)
-- 📱 **3 WhatsApp messages** instead of 1
+- 📱 **2 WhatsApp messages** for complete communication
 - 🎯 **Better UX** with progressive loading
 - 🛡️ **More reliable** with better error handling
+- 🇺🇸 **US as default country** for easier input
 
 ---
 

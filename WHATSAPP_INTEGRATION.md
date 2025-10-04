@@ -31,10 +31,10 @@ The migration adds:
 ## WATI Configuration
 
 ### Current Setup
-- **API Endpoint**: `https://live-mt-server.wati.io/1027960/api/v1/sendTemplateMessage`
-- **Channel Number**: `16056050919`
+- **API Endpoint**: `https://live-mt-server.wati.io/YOUR_TENANT_ID/api/v1/sendTemplateMessage`
+- **Channel Number**: `YOUR_CHANNEL_NUMBER`
 - **Template Name**: `bookingconfirmation`
-- **Auth Token**: Configured in `lib/whatsapp.ts`
+- **Auth Token**: Configured via environment variables
 
 ### Template Parameters
 The template expects 1 parameter:
@@ -78,8 +78,8 @@ Example:
 ### Request Format
 ```bash
 curl -X 'POST' \
-  'https://live-mt-server.wati.io/1027960/api/v1/sendTemplateMessage?whatsappNumber=919876543210' \
-  -H 'Authorization: Bearer YOUR_TOKEN' \
+  'https://live-mt-server.wati.io/YOUR_TENANT_ID/api/v1/sendTemplateMessage?whatsappNumber=1234567890' \
+  -H 'Authorization: Bearer YOUR_AUTH_TOKEN' \
   -H 'Content-Type: application/json-patch+json' \
   -d '{
     "template_name": "bookingconfirmation",
@@ -90,7 +90,7 @@ curl -X 'POST' \
         "value": "BK-123"
       }
     ],
-    "channel_number": "16056050919"
+    "channel_number": "YOUR_CHANNEL_NUMBER"
   }'
 ```
 
@@ -101,14 +101,14 @@ curl -X 'POST' \
 ## Security Considerations
 
 ### 1. API Token Storage
-⚠️ **Current**: Token is stored in `lib/whatsapp.ts`
-🔒 **Recommended**: Move to environment variables
+✅ **Current**: Token is stored securely in environment variables
+🔒 **Setup**: Configure in `.env.local`
 
 ```env
 # .env.local
-WATI_API_TOKEN=your_token_here
-WATI_API_URL=https://live-mt-server.wati.io/1027960/api/v1/sendTemplateMessage
-WATI_CHANNEL_NUMBER=16056050919
+WATI_AUTH_TOKEN=your_token_here
+WATI_API_URL=https://live-mt-server.wati.io/YOUR_TENANT_ID/api/v1/sendTemplateMessage
+WATI_CHANNEL_NUMBER=YOUR_CHANNEL_NUMBER
 ```
 
 ### 2. Phone Number Privacy

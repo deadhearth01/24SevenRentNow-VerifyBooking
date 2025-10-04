@@ -37,9 +37,9 @@ NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_key
 
 # WATI WhatsApp API
-WATI_API_URL=https://live-mt-server.wati.io/1027960/api/v1/sendTemplateMessage
+WATI_API_URL=https://live-mt-server.wati.io/YOUR_TENANT_ID/api/v1/sendTemplateMessage
 WATI_AUTH_TOKEN=your_wati_token_here
-WATI_CHANNEL_NUMBER=16056050919
+WATI_CHANNEL_NUMBER=YOUR_CHANNEL_NUMBER
 WATI_TEMPLATE_NAME=bookingconfirmation
 
 # Optional: Analytics/Tracking
