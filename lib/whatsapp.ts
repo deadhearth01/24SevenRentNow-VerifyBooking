@@ -7,6 +7,8 @@ interface WhatsAppTemplateParams {
   bookingId: string;
   phoneNumber: string;
   countryCode?: string; // Optional country code (defaults to '91' for India)
+  templateName?: string; // Optional template name (defaults to 'bookingconfirmation')
+  parameters?: Array<{ name: string; value: string }>; // Optional parameters
 }
 
 interface WhatsAppResponse {
@@ -17,7 +19,7 @@ interface WhatsAppResponse {
 
 /**
  * Send WhatsApp booking confirmation message via API route
- * @param params - Booking details including booking ID, phone number, and country code
+ * @param params - Booking details including booking ID, phone number, country code, and template
  * @returns Promise with success status
  */
 export async function sendBookingConfirmation(
@@ -35,7 +37,9 @@ export async function sendBookingConfirmation(
       body: JSON.stringify({
         bookingId: params.bookingId,
         phoneNumber: params.phoneNumber,
-        countryCode: params.countryCode || '91'
+        countryCode: params.countryCode || '91',
+        templateName: params.templateName || 'bookingconfirmation',
+        parameters: params.parameters
       })
     });
 
@@ -54,6 +58,56 @@ export async function sendBookingConfirmation(
 
   } catch (error) {
     console.error('❌ Failed to send WhatsApp message:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+/**
+ * Send multiple WhatsApp templates in sequence
+ * @param phoneNumber - Phone number to send messages to
+ * @param countryCode - Country code
+ * @param templates - Array of templates to send
+ * @returns Promise with success status
+ */
+export async function sendMultipleTemplates(
+  phoneNumber: string,
+  countryCode: string,
+  templates: Array<{ templateName: string; parameters?: Array<{ name: string; value: string }> }>
+): Promise<WhatsAppResponse> {
+  try {
+    console.log(`📱 Sending ${templates.length} WhatsApp templates...`);
+    
+    const results = await Promise.all(
+      templates.map(template =>
+        sendBookingConfirmation({
+          bookingId: template.parameters?.find(p => p.name === '1')?.value || 'N/A',
+          phoneNumber,
+          countryCode,
+          templateName: template.templateName,
+          parameters: template.parameters
+        })
+      )
+    );
+
+    const allSucceeded = results.every(r => r.success);
+    const failedCount = results.filter(r => !r.success).length;
+
+    if (allSucceeded) {
+      return {
+        success: true,
+        message: `All ${templates.length} templates sent successfully`
+      };
+    } else {
+      return {
+        success: false,
+        error: `${failedCount} out of ${templates.length} templates failed to send`
+      };
+    }
+  } catch (error) {
+    console.error('❌ Failed to send multiple templates:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred'

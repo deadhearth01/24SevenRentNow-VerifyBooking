@@ -21,7 +21,6 @@ import {
   TextField,
   Select,
   MenuItem,
-  InputLabel,
   FormControl,
   Grid,
 } from '@mui/material';
@@ -62,7 +61,7 @@ export default function VerifyBooking() {
   const [showGuidelines, setShowGuidelines] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [countryCode, setCountryCode] = useState('91'); // Default to India
+  const [countryCode, setCountryCode] = useState('1'); // Default to US
   const [phoneError, setPhoneError] = useState('');
 
   const requiredDocuments = useMemo(() => [
@@ -150,7 +149,7 @@ export default function VerifyBooking() {
       try {
         console.log('🔐 Initializing authentication...');
         
-        // Get session without aggressive timeout
+        // Faster session check - no timeout needed for getSession
         const { data: { session }, error } = await supabase.auth.getSession();
         
         if (error) {
@@ -163,24 +162,25 @@ export default function VerifyBooking() {
           
           if (session?.user) {
             console.log('👤 User authenticated, checking booking status...');
-            // Run these in parallel for faster loading
             try {
-              const results = await Promise.all([
+              // Run user data store and booking check in parallel
+              const [, hasExistingBooking] = await Promise.all([
                 storeUserData(session.user),
                 checkExistingBookingStatus(session.user)
               ]);
-              const hasExistingBooking = results[1];
-              console.log('✅ User data and booking status checked. Has booking:', hasExistingBooking);
               
-              // Only set to verification page if no booking was found
-              if (!hasExistingBooking) {
+              console.log('✅ Booking check complete. Has booking:', hasExistingBooking);
+              
+              // Set page state based on booking status
+              if (hasExistingBooking) {
+                console.log('✅ Existing booking found, showing confirmation page');
+                setCurrentPage('confirmation');
+              } else {
                 console.log('ℹ️ No existing booking, showing verification page');
                 setCurrentPage('verification');
-              } else {
-                console.log('✅ Existing booking found, staying on confirmation page');
               }
             } catch (checkError) {
-              console.error('❌ Error during user/booking check:', checkError);
+              console.error('❌ Error during booking check:', checkError);
               setCurrentPage('verification');
             }
           } else {
@@ -188,10 +188,10 @@ export default function VerifyBooking() {
             setCurrentPage('verification');
           }
           
-          // Always stop loading after auth check
+          // Stop loading
           setLoading(false);
           
-          // Clear the safety timeout since we completed
+          // Clear timeout
           if (loadingTimeoutId) {
             clearTimeout(loadingTimeoutId);
           }
@@ -205,14 +205,14 @@ export default function VerifyBooking() {
       }
     };
 
-    // Safety timeout - ONLY stops loading spinner, doesn't change page state
+    // Reduced timeout to 5 seconds for faster fallback
     loadingTimeoutId = setTimeout(() => {
       if (mounted && loading) {
         console.warn('⏰ Auth loading timeout - stopping loading spinner');
         setLoading(false);
-        // Don't touch currentPage here - let the auth flow complete
+        setCurrentPage('verification');
       }
-    }, 8000);
+    }, 5000); // Reduced from 8000ms
 
     initializeAuth();
 
@@ -297,21 +297,22 @@ export default function VerifyBooking() {
 
       console.log('🔍 Checking existing booking status for user:', user.email);
 
-      // Query WITHOUT the join since tables aren't related in database
+      // Optimized query: only select needed fields for faster response
       const queryPromise = supabase
         .from('booking_verifications')
-        .select('*')
+        .select('booking_id, verification_status, documents_confirmed, guidelines_accepted, phone_number, created_at')
         .eq('user_email', user.email)
         .in('verification_status', ['confirmed', 'ride_completed'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
+      // Reduced timeout to 3 seconds for faster fallback
       const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) => 
         setTimeout(() => {
-          console.warn('⏰ Database query timeout after 5 seconds');
+          console.warn('⏰ Database query timeout after 3 seconds');
           resolve({ data: null, error: { code: 'TIMEOUT', message: 'Query timeout' } });
-        }, 5000)
+        }, 3000) // Reduced from 5000ms
       );
 
       const { data: existingBooking, error } = await Promise.race([
@@ -322,8 +323,6 @@ export default function VerifyBooking() {
       console.log('📦 Database query result:', { 
         foundBooking: !!existingBooking, 
         errorCode: error?.code || null,
-        errorMessage: error?.message || null,
-        bookingStatus: existingBooking?.verification_status || null,
         bookingId: existingBooking?.booking_id || null
       });
 
@@ -333,69 +332,45 @@ export default function VerifyBooking() {
       }
 
       if (!existingBooking) {
-        console.log('ℹ️ No existing confirmed booking found - user needs to complete verification');
+        console.log('ℹ️ No existing confirmed booking found');
         return false;
       }
 
-      console.log('✅ Found existing booking:', {
-        bookingId: existingBooking.booking_id,
-        status: existingBooking.verification_status,
-        documentsConfirmed: existingBooking.documents_confirmed,
-        guidelinesAccepted: existingBooking.guidelines_accepted,
-        createdAt: existingBooking.created_at
-      });
+      console.log('✅ Found existing booking:', existingBooking.booking_id);
       
-      // Restore basic booking data
+      // Restore booking data
       const documents = existingBooking.documents_confirmed ? JSON.parse(existingBooking.documents_confirmed) : [];
-      console.log('📋 Restoring documents:', documents);
       setCheckedDocuments(documents);
       setGuidelinesAccepted(existingBooking.guidelines_accepted || false);
       setBookingId(existingBooking.booking_id);
       setPhoneNumber(existingBooking.phone_number || '');
       
-      // Check if ride is already completed
+      // Check if ride is completed
       if (existingBooking.verification_status === 'ride_completed') {
-        console.log('🚗 Ride already completed - checking for ride completion data...');
+        console.log('🚗 Ride already completed');
         setIsRideCompleted(true);
         
-        // Try to fetch ride completion data separately (no foreign key relation)
-        try {
-          const { data: rideCompletion } = await supabase
-            .from('ride_completions')
-            .select('*')
-            .eq('booking_verification_id', existingBooking.booking_id)
-            .maybeSingle();
-          
-          if (rideCompletion) {
-            console.log('📸 Found ride completion data:', rideCompletion);
-            
-            // Optionally restore the uploaded file metadata for display
-            if (rideCompletion.file_metadata) {
-              try {
-                const metadata = JSON.parse(rideCompletion.file_metadata);
-                console.log('📁 Restored file metadata:', metadata);
-              } catch (e) {
-                console.warn('Error parsing file metadata:', e);
-              }
+        // Fetch ride completion data separately (non-blocking)
+        void supabase
+          .from('ride_completions')
+          .select('*')
+          .eq('booking_verification_id', existingBooking.booking_id)
+          .maybeSingle()
+          .then(({ data: rideCompletion }) => {
+            if (rideCompletion) {
+              console.log('� Found ride completion data');
             }
-          }
-        } catch (rideError) {
-          console.warn('Could not fetch ride completion data:', rideError);
-        }
+          })
       }
-      
-      console.log('🔄 Switching to confirmation page');
-      setCurrentPage('confirmation');
       
       // Track restoration (non-blocking)
       trackUserAction('booking_status_restored', {
         userEmail: user.email,
         bookingVerificationId: existingBooking.booking_id,
-        previouslyConfirmed: true,
         rideCompleted: existingBooking.verification_status === 'ride_completed',
-      }).catch(err => console.warn('Failed to track action:', err));
+      }).catch((err: any) => console.warn('Failed to track action:', err));
       
-      return true; // Return true to indicate booking was found
+      return true;
       
     } catch (error) {
       console.log('❌ Could not check existing booking status:', error);
@@ -444,7 +419,7 @@ export default function VerifyBooking() {
         document: document,
         checked: !checkedDocuments.includes(document),
         totalChecked: newCheckedDocuments.length,
-      }).catch(console.warn);
+      }).catch((err: any) => console.warn('Track action error:', err));
     }
   }, [checkedDocuments, trackUserAction, user?.email, bookingId]);
   
@@ -456,7 +431,7 @@ export default function VerifyBooking() {
       trackUserAction('guidelines_accepted', {
         userEmail: user.email,
         bookingVerificationId: bookingId,
-      }).catch(console.warn);
+      }).catch((err: any) => console.warn('Track action error:', err));
     }
   }, [user?.email, bookingId, trackUserAction]);
 
@@ -544,29 +519,59 @@ export default function VerifyBooking() {
 
       console.log('✅ Booking verification inserted successfully');
 
-      // Send WhatsApp confirmation (non-blocking)
-      sendBookingConfirmation({
-        bookingId: bookingId,
-        phoneNumber: phoneNumber,
-        countryCode: countryCode
-      }).then((result) => {
-        if (result.success) {
-          console.log('📱 WhatsApp confirmation sent successfully');
+      // Immediately switch to confirmation page for better UX
+      setCurrentPage('confirmation');
+      setBookingLoading(false);
+
+      // Show immediate success message
+      setSnackbar({
+        open: true,
+        message: 'Booking confirmed! Sending WhatsApp notifications...',
+        severity: 'success'
+      });
+
+      // Send 2 WhatsApp templates (non-blocking, in background)
+      Promise.all([
+        // Template 1: after_booking
+        sendBookingConfirmation({
+          bookingId: bookingId,
+          phoneNumber: phoneNumber,
+          countryCode: countryCode,
+          templateName: 'after_booking',
+          parameters: [{ name: 'BookingID', value: bookingId }]
+        }),
+        // Template 2: guidelines_24_car (no parameters)
+        sendBookingConfirmation({
+          bookingId: bookingId,
+          phoneNumber: phoneNumber,
+          countryCode: countryCode,
+          templateName: 'guidelines_24_car',
+          parameters: []
+        })
+      ]).then((results) => {
+        const successCount = results.filter(r => r.success).length;
+        console.log(`📱 WhatsApp: ${successCount}/2 templates sent successfully`);
+        
+        if (successCount === 2) {
           setSnackbar({
             open: true,
-            message: 'Booking confirmed! WhatsApp confirmation sent to your phone.',
+            message: 'Booking confirmed! All WhatsApp notifications sent successfully.',
             severity: 'success'
           });
-        } else {
-          console.warn('⚠️ WhatsApp message failed:', result.error);
-          // Don't fail the booking if WhatsApp fails
+        } else if (successCount > 0) {
           setSnackbar({
             open: true,
-            message: 'Booking confirmed! (WhatsApp notification could not be sent)',
+            message: `Booking confirmed! ${successCount}/2 WhatsApp notifications sent.`,
+            severity: 'warning'
+          });
+        } else {
+          setSnackbar({
+            open: true,
+            message: 'Booking confirmed! (WhatsApp notifications could not be sent)',
             severity: 'warning'
           });
         }
-      }).catch((err) => {
+      }).catch((err: any) => {
         console.warn('⚠️ WhatsApp error:', err);
       });
 
@@ -577,9 +582,7 @@ export default function VerifyBooking() {
         phoneNumber: phoneNumber,
         documentsVerified: checkedDocuments,
         guidelinesAccepted: true,
-      }).catch(console.warn);
-      
-      setCurrentPage('confirmation');
+      }).catch((err: any) => console.warn('Track action error:', err));
       
     } catch (error: any) {
       console.error('Error confirming booking:', error);
@@ -590,7 +593,6 @@ export default function VerifyBooking() {
         message: errorMessage,
         severity: 'error'
       });
-    } finally {
       setBookingLoading(false);
     }
   }, [user, bookingId, checkedDocuments, guidelinesAccepted, phoneNumber, countryCode, requiredDocuments, trackUserAction]);
@@ -776,7 +778,7 @@ export default function VerifyBooking() {
         photosUploaded: Object.keys(ridePhotos).filter(key => ridePhotos[key as keyof typeof ridePhotos] !== null).length,
         videoUploaded: !!surroundingVideo,
         completionTimestamp: new Date().toISOString(),
-      }).catch(console.warn);
+      }).catch((err: any) => console.warn('Track action error:', err));
 
       setIsRideCompleted(true);
       setSnackbar({
@@ -1381,7 +1383,7 @@ export default function VerifyBooking() {
                   trackUserAction('guidelines_viewed', {
                     userEmail: user?.email,
                     bookingVerificationId: bookingId,
-                  }).catch(console.warn);
+                  }).catch((err: any) => console.warn('Track action error:', err));
                 }}
                 sx={{ 
                   mb: 2,

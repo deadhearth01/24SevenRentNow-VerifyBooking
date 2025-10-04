@@ -42,7 +42,13 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { bookingId, phoneNumber, countryCode = '91' } = body;
+    const { 
+      bookingId, 
+      phoneNumber, 
+      countryCode = '91', 
+      templateName = TEMPLATE_NAME,
+      parameters 
+    } = body;
 
     if (!bookingId || !phoneNumber) {
       return NextResponse.json(
@@ -56,15 +62,18 @@ export async function POST(request: NextRequest) {
     // Format phone number with country code
     const whatsappNumber = formatPhoneNumber(phoneNumber, countryCode);
 
+    // Use provided parameters or default booking ID parameter
+    const templateParameters = parameters || [
+      {
+        name: '1',
+        value: bookingId
+      }
+    ];
+
     const requestBody = {
-      template_name: TEMPLATE_NAME,
+      template_name: templateName,
       broadcast_name: `booking_notification_${bookingId}`,
-      parameters: [
-        {
-          name: '1',
-          value: bookingId
-        }
-      ],
+      parameters: templateParameters,
       channel_number: CHANNEL_NUMBER
     };
 
@@ -75,7 +84,8 @@ export async function POST(request: NextRequest) {
       template: requestBody.template_name,
       bookingId: bookingId,
       countryCode: countryCode,
-      phoneNumber: whatsappNumber.slice(0, 4) + '****'
+      phoneNumber: whatsappNumber.slice(0, 4) + '****',
+      parametersCount: templateParameters.length
     });
 
     const response = await fetch(url, {
